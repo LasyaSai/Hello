@@ -133,11 +133,12 @@ def load_flight_data():
 ```
 
 Caching Logic:
-$$C(f(x)) = \begin{cases} 
+```math
+C(f(x)) = \begin{cases} 
 cached\_result & \text{if } hash(x) \text{ exists} \\
 f(x) & \text{otherwise}
-\end{cases}$$
-
+\end{cases}
+```
 ## Performance Monitoring
 Response Time:
 $$Response Time = T_{end} - T_{start}$$

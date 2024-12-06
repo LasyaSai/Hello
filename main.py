@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import pickle
 
 
 def create_flight_app():
@@ -76,7 +77,8 @@ def create_flight_app():
             avg_delay = dest_data['ARR_DELAY'].mean()
             st.metric("Average Delay", f"{avg_delay:.1f} mins")
         with metric_col3:
-            on_time_rate = (dest_data['Status'].isin(['On-time','Early'])).mean() * 100
+            on_time_rate = (dest_data['Status'].isin(
+                ['On-time', 'Early'])).mean() * 100
             st.metric("On-Time Rate", f"{on_time_rate:.1f}%")
         with metric_col4:
             early_rate = (dest_data['Status'] == 'Early').mean() * 100
@@ -134,7 +136,8 @@ def create_flight_app():
             avg_delay = airline_data['ARR_DELAY'].mean()
             st.metric("Average Delay", f"{avg_delay:.1f} mins")
         with metric_col3:
-            on_time_rate = (airline_data['Status'].isin(['On-time','Early'])).mean() * 100
+            on_time_rate = (airline_data['Status'].isin(
+                ['On-time', 'Early'])).mean() * 100
             st.metric("On-Time Rate", f"{on_time_rate:.1f}%")
         with metric_col4:
             avg_distance = airline_data['DISTANCE'].mean()
@@ -175,5 +178,144 @@ def create_flight_app():
             st.metric("Avg Air Time", f"{avg_air_time:.1f} mins")
 
 
+def create_prediction_page():
+    st.title("✈️ Flight Delay Prediction")
+
+    try:
+        with open('random_forest_delay_model.pkl', 'rb') as file:
+            model_data = pickle.load(file)
+
+        model = model_data['model']
+        scaler = model_data['scaler']
+        features = model_data['features']
+
+        st.header("Enter Flight Details")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            dep_delay = st.number_input("Departure Delay (minutes)",
+                                        min_value=-60,
+                                        max_value=300,
+                                        value=0)
+            distance = st.number_input("Flight Distance (miles)",
+                                       min_value=100,
+                                       max_value=3000,
+                                       value=1000)
+            dep_hour = st.number_input("Departure Hour (0-23)",
+                                       min_value=0,
+                                       max_value=23,
+                                       value=14)
+
+        with col2:
+            cancelled = st.selectbox("Flight Cancelled",
+                                     options=[0, 1],
+                                     format_func=lambda x: "No" if x == 0 else "Yes")
+            diverted = st.selectbox("Flight Diverted",
+                                    options=[0, 1],
+                                    format_func=lambda x: "No" if x == 0 else "Yes")
+            month = st.slider("Month", 1, 12, 7)
+            day = st.slider("Day", 1, 31, 15)
+
+        # Calculate additional features
+        day_of_week = pd.Timestamp(2024, month, day).dayofweek
+        is_weekend = int(day_of_week >= 5)
+        is_morning = int(6 <= dep_hour <= 12)
+        is_evening = int(dep_hour >= 18)
+        is_summer = int(month in [6, 7, 8])
+        is_winter = int(month in [12, 1, 2])
+        '''
+        Training Accuracy: 0.8489
+        Testing Accuracy: 0.8468
+        
+        Feature Importance:
+                feature  importance
+        0     DEP_DELAY    0.936467
+        2     CANCELLED    0.021732
+        4      DEP_HOUR    0.013293
+        7    IS_MORNING    0.006758
+        1      DISTANCE    0.006297
+        3      DIVERTED    0.004755
+        9     IS_SUMMER    0.003037
+        8    IS_EVENING    0.002948
+        11        MONTH    0.002361
+        12          DAY    0.001005
+        5   DAY_OF_WEEK    0.000816
+        10    IS_WINTER    0.000345
+        6    IS_WEEKEND    0.000186
+        '''
+        if st.button("Predict Delay Probability"):
+            input_data = {
+                'DEP_DELAY': dep_delay,
+                'DISTANCE': distance,
+                'CANCELLED': cancelled,
+                'DIVERTED': diverted,
+                'DEP_HOUR': dep_hour,
+                'DAY_OF_WEEK': day_of_week,
+                'IS_WEEKEND': is_weekend,
+                'IS_MORNING': is_morning,
+                'IS_EVENING': is_evening,
+                'IS_SUMMER': is_summer,
+                'IS_WINTER': is_winter,
+                'MONTH': month,
+                'DAY': day
+            }
+
+            # Create DataFrame with correct feature order
+            input_df = pd.DataFrame([input_data])[features]
+
+            # Scale the input
+            input_scaled = scaler.transform(input_df)
+
+            # Make predictions
+            delay_probability = model.predict_proba(input_scaled)[0][1]
+            is_delayed = model.predict(input_scaled)[0]
+
+            # Display results
+            st.header("Prediction Results")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Delay Probability", f"{delay_probability:.1%}")
+            with col2:
+                status = "Likely Delayed" if is_delayed else "Likely On Time"
+                st.metric("Predicted Status", status)
+
+            # Create gauge chart
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=float(delay_probability * 100),
+                domain={'x': [0, 1], 'y': [0, 1]},
+                title={'text': "Delay Probability"},
+                gauge={
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': "darkblue"},
+                    'steps': [
+                        {'range': [0, 33], 'color': "lightgreen"},
+                        {'range': [33, 66], 'color': "yellow"},
+                        {'range': [66, 100], 'color': "salmon"}
+                    ]
+                }
+            ))
+
+            st.plotly_chart(fig)
+
+    except FileNotFoundError:
+        st.error(
+            "Model file not found. Please ensure the model is trained and saved first.")
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+
+
+def main():
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio(
+        "Select Page", ["Flight Analysis", "Delay Prediction"])
+
+    if page == "Flight Analysis":
+        create_flight_app()
+    else:
+        create_prediction_page()
+
+
 if __name__ == "__main__":
-    create_flight_app()
+    main()
